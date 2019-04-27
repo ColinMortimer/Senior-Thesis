@@ -1,0 +1,141 @@
+***********
+* Colin Mortimer
+* Senior thesis
+* 1 prepare election results
+***********
+
+* Import CSV
+import delimited "$input/1976-2016-house.csv"
+
+* Drop and sort
+drop if year < 2008
+sort year state district
+rename candidate candidate_name
+drop office state_cen state_ic stage special writein version
+
+* Code DFL as Democratic
+replace party = "democrat" if party == "democratic-farmer-labor"
+
+* insert missing party observations
+do "$scripts/1a missing party.do"
+
+* * Generate vote share
+* gen share = candidatevotes/totalvotes
+
+* Generate year state district identifier
+tostring district, generate(district_str)
+tostring year, generate(year_str)
+gen year_state_dis = year_str + "_" + state + "_" + district_str
+drop year_str
+
+* Generate district identifier
+rename district district_num
+generate district = state_po + " - " + district_str
+drop district_str
+
+* * Calculate candidate count
+* preserve
+* gen one = 1
+* collapse (count) one, by(year_state_dis)
+* saveold "$temp/year_state_district_count.dta", replace
+* restore
+
+* * Calculate winning vote share count
+* preserve
+* gen one = 1
+* collapse (max) share, by(year_state_dis)
+* rename share winning_share
+* saveold "$temp/year_state_district_max.dta", replace
+* restore
+
+* * Merge candidate counts 
+* merge m:1 year_state_dis using "$temp/year_state_district_count.dta"
+* rename one candidates
+* drop _merge
+
+* * Merge candidate counts 
+* merge m:1 year_state_dis using "$temp/year_state_district_max.dta"
+* drop _merge
+
+* * Find winner
+* gen winner = .
+* replace winner = 1 if share == winning_share
+* replace winner = 0 if share != winning_share
+
+* * Find winning party
+* gen party_win = ""
+* replace party_win = party if winner == 1
+
+* * Assign winning party to each observation
+* preserve
+* collapse share, by(year_state_dis party_win)
+* drop if party_win == ""
+* saveold "$temp/winning party.dta", replace
+* restore
+* merge m:1 year_state_dis using "$temp/winning party.dta"
+* drop _merge
+
+* * Calculate Republican vote share and merge
+* preserve
+* drop if party != "republican"
+* collapse (max) share, by(year_state_dis)
+* rename share republican_share
+* saveold "$temp/republican_share.dta", replace
+* restore
+* merge m:1 year_state_dis using "$temp/republican_share.dta"
+* drop _merge
+
+* * Calculate Democrat vote share and merge
+* preserve
+* drop if party != "democrat"
+* collapse (max) share, by(year_state_dis)
+* rename share democrat_share
+* saveold "$temp/democrat_share.dta", replace
+* restore
+* merge m:1 year_state_dis using "$temp/democrat_share.dta"
+* drop _merge
+
+* Calculate Republican votes and merge
+preserve
+drop if party != "republican"
+collapse (max) candidatevotes, by(year_state_dis)
+rename candidatevotes republican_votes
+saveold "$temp/republican_votes.dta", replace
+restore
+merge m:1 year_state_dis using "$temp/republican_share.dta"
+drop if party == "republican" & republican_votes != candidatevotes
+drop _merge
+
+* Calculate Democrat vote share and merge
+preserve
+drop if party != "democrat"
+collapse (max) candidatevotes, by(year_state_dis)
+rename candidatevotes democrat_votes
+saveold "$temp/democrat_votes.dta", replace
+restore
+merge m:1 year_state_dis using "$temp/democrat_share.dta"
+drop if party == "democrat" & democrat_votes != candidatevotes
+drop _merge
+
+* Calculate Democrat-Republican ratio
+gen dem_rep_ratio = .
+replace dem_rep_ratio = democrat_votes / republican_votes
+
+* Reduce dataset to districts with a Republican vs. Democrat
+* Drop uncontested elections
+drop if party != "democrat"
+drop if mi(dem_rep_ratio)
+
+* Drop uneeded variables
+drop winning_share 
+drop share
+drop candidate_name
+drop party
+drop candidatevotes
+drop totalvotes
+drop democrat_votes republican_votes
+
+* Order variables
+order year state state_po state_fips district_num district year_state_dis dem_rep_ratio
+
+* End DO *
